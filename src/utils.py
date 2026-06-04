@@ -11,17 +11,40 @@ TIMEZONE_NAME = "Europe/Helsinki"
 HELSINKI_TZ = ZoneInfo(TIMEZONE_NAME)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+DOWNLOADED_DIR = OUTPUTS_DIR / "downloaded"
+MANIFESTS_DIR = OUTPUTS_DIR / "manifests"
+RUNS_DIR = OUTPUTS_DIR / "runs"
 LOGS_DIR = PROJECT_ROOT / "logs"
 CONFIG_DIR = PROJECT_ROOT / "config"
 SESSIONS_DIR = PROJECT_ROOT / "sessions"
 
 WINDOWS_FORBIDDEN_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
+SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
+SPACES_RE = re.compile(r"\s+")
+DASHES_RE = re.compile(r"-{2,}")
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 def ensure_runtime_dirs() -> None:
-    for path in (OUTPUTS_DIR, LOGS_DIR, CONFIG_DIR, SESSIONS_DIR):
+    for path in (OUTPUTS_DIR, DOWNLOADED_DIR, MANIFESTS_DIR, RUNS_DIR, LOGS_DIR, CONFIG_DIR, SESSIONS_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def output_layout(outputs_root: Path | None = None) -> tuple[Path, Path, Path]:
+    root = outputs_root or OUTPUTS_DIR
+    downloaded_dir = root / "downloaded"
+    manifests_dir = root / "manifests"
+    runs_dir = root / "runs"
+    for path in (downloaded_dir, manifests_dir, runs_dir):
+        path.mkdir(parents=True, exist_ok=True)
+    return downloaded_dir, manifests_dir, runs_dir
 
 
 def inclusive_date_range(start: date, end: date) -> list[date]:
@@ -83,43 +106,29 @@ def display_source(raw_source: str) -> str:
 
 
 def safe_filename_part(value: str, fallback: str = "source") -> str:
-    cleaned = WINDOWS_FORBIDDEN_RE.sub("_", value.strip())
-    cleaned = SAFE_CHARS_RE.sub("_", cleaned)
-    cleaned = cleaned.strip("._-")
-    return cleaned[:120] or fallback
+    cleaned = value.strip().lstrip("@")
+    cleaned = WINDOWS_FORBIDDEN_RE.sub("-", cleaned)
+    cleaned = SPACES_RE.sub("-", cleaned)
+    cleaned = SAFE_CHARS_RE.sub("-", cleaned)
+    cleaned = DASHES_RE.sub("-", cleaned)
+    cleaned = cleaned.strip("_-")
+    cleaned = cleaned.lower()
+    cleaned = cleaned[:120].strip("_-") or fallback
+    if cleaned.upper() in WINDOWS_RESERVED_NAMES:
+        cleaned = f"{fallback}-{cleaned}"
+    return cleaned
 
 
 def source_slug(raw_source: str) -> str:
     return safe_filename_part(source_identifier(raw_source), "source")
 
 
-def export_folder_name(now: datetime | None = None) -> str:
-    if now is None:
-        now = datetime.now(HELSINKI_TZ)
-    else:
-        now = now.astimezone(HELSINKI_TZ) if now.tzinfo else now.replace(tzinfo=HELSINKI_TZ)
-    return f"export_{now:%Y-%m-%d_%H%M}"
-
-
-def create_export_dir(outputs_root: Path | None = None) -> Path:
-    outputs_root = outputs_root or OUTPUTS_DIR
-    outputs_root.mkdir(parents=True, exist_ok=True)
-    base = outputs_root / export_folder_name()
-    candidate = base
-    index = 2
-    while candidate.exists():
-        candidate = outputs_root / f"{base.name}_{index}"
-        index += 1
-    candidate.mkdir(parents=True)
-    return candidate
-
-
 def messages_filename(day: date, slug: str) -> str:
-    return f"{day:%Y-%m-%d}__{slug}__messages.txt"
+    return f"{slug}-{day:%Y-%m-%d}__messages.txt"
 
 
 def pair_folder_name(day: date, slug: str) -> str:
-    return f"{day:%Y-%m-%d}__{slug}"
+    return f"{slug}-{day:%Y-%m-%d}"
 
 
 def image_filename(day: date, slug: str, message_id: str, dt: datetime, index: int, ext: str) -> str:
@@ -127,7 +136,7 @@ def image_filename(day: date, slug: str, message_id: str, dt: datetime, index: i
     if normalized_ext == "jpeg":
         normalized_ext = "jpg"
     return (
-        f"{day:%Y-%m-%d}__{slug}__msg_{safe_filename_part(str(message_id), 'unknown')}"
+        f"{slug}-{day:%Y-%m-%d}__msg_{safe_filename_part(str(message_id), 'unknown')}"
         f"__{dt.astimezone(HELSINKI_TZ):%H%M%S}__photo_{index:02d}.{normalized_ext}"
     )
 
@@ -168,4 +177,3 @@ def path_for_display(path: Path) -> str:
         return str(path.relative_to(PROJECT_ROOT))
     except ValueError:
         return str(path)
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import date
 from pathlib import Path
 
@@ -9,10 +10,11 @@ import pandas as pd
 import streamlit as st
 
 from src.exporter import run_export, summarize_results
+from src.manifest import result_to_row
 from src.models import ExportOptions
 from src.settings import load_settings, save_settings
 from src.telegram_login_client import TelegramLoginClient, TwoFactorRequiredError
-from src.utils import LOGS_DIR, OUTPUTS_DIR, ensure_runtime_dirs, inclusive_date_range
+from src.utils import DOWNLOADED_DIR, LOGS_DIR, OUTPUTS_DIR, ensure_runtime_dirs, inclusive_date_range
 
 
 APP_TITLE = "TelegramSourceExporter"
@@ -208,28 +210,110 @@ def _run_export_ui(
         api_id=api_id,
         api_hash=api_hash,
     )
-    export_dir, results = run_export(options, progress_callback=progress_callback, log_callback=log_callback)
-    settings["last_output_dir"] = str(export_dir)
+    artifacts, results = run_export(options, progress_callback=progress_callback, log_callback=log_callback)
+    settings["last_manifest_path"] = str(artifacts.manifest_path)
+    settings["last_run_path"] = str(artifacts.run_path)
+    settings["last_output_dir"] = str(artifacts.downloaded_dir)
+    st.session_state.last_manifest_path = str(artifacts.manifest_path)
     save_settings(settings)
-    st.success(f"Готово: {export_dir}")
-    st.dataframe(pd.DataFrame([result.__dict__ for result in results]))
+    st.success(f"Готово: {artifacts.manifest_path}")
+    st.write(f"Папка downloaded: `{artifacts.downloaded_dir}`")
+    st.dataframe(pd.DataFrame([result_to_row(result) for result in results]))
     st.write(dict(summarize_results(results)))
 
 
 def _results_block(settings: dict) -> None:
     st.subheader("Результаты")
-    output_dir = Path(settings.get("last_output_dir") or OUTPUTS_DIR)
     st.write(f"Папка outputs: `{OUTPUTS_DIR}`")
-    st.write(f"Папка текущей выгрузки: `{output_dir}`")
-    col_outputs, col_current = st.columns(2)
+    st.write(f"Папка downloaded: `{DOWNLOADED_DIR}`")
+
+    last_manifest_raw = st.session_state.get("last_manifest_path") or settings.get("last_manifest_path") or ""
+    last_manifest_path = Path(last_manifest_raw) if last_manifest_raw else None
+
+    col_outputs, col_downloaded, col_manifest = st.columns(3)
     with col_outputs:
         if st.button("Открыть папку outputs"):
             _open_folder(OUTPUTS_DIR)
-    with col_current:
-        if st.button("Открыть папку текущей выгрузки"):
-            _open_folder(output_dir)
+    with col_downloaded:
+        if st.button("Открыть папку downloaded"):
+            _open_folder(DOWNLOADED_DIR)
+    with col_manifest:
+        if st.button("Открыть папку manifest", disabled=last_manifest_path is None):
+            _open_folder(last_manifest_path.parent if last_manifest_path else OUTPUTS_DIR)
+
+    view_mode = st.radio(
+        "Показать результаты",
+        ["Последний запуск", "Вся история"],
+        horizontal=True,
+    )
+    if view_mode == "Последний запуск":
+        _last_run_results(last_manifest_path)
+    else:
+        _history_results()
+
     if st.session_state.run_log:
         st.text_area("Лог выполнения", value="\n".join(st.session_state.run_log), height=240)
+
+
+def _last_run_results(manifest_path: Path | None) -> None:
+    if manifest_path is None:
+        st.info("Manifest последнего запуска пока не найден.")
+        return
+    st.write(f"Manifest: `{manifest_path}`")
+    if not manifest_path.exists():
+        st.warning("Файл manifest последнего запуска не найден.")
+        return
+    try:
+        dataframe = pd.read_csv(manifest_path, encoding="utf-8-sig")
+    except Exception as exc:
+        st.error(f"Не удалось прочитать manifest: {exc}")
+        return
+    st.dataframe(dataframe)
+
+
+def _history_results() -> None:
+    rows = _downloaded_history_rows(DOWNLOADED_DIR)
+    if not rows:
+        st.info("В outputs/downloaded пока нет скачанных папок.")
+        return
+
+    page_size = 100
+    total_pages = max(1, (len(rows) + page_size - 1) // page_size)
+    page = 1
+    if total_pages > 1:
+        page = int(st.number_input("Страница", min_value=1, max_value=total_pages, value=1, step=1))
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    st.write(f"Показаны {start + 1}-{min(end, len(rows))} из {len(rows)} папок.")
+    st.dataframe(pd.DataFrame(rows[start:end]))
+
+
+def _downloaded_history_rows(downloaded_dir: Path) -> list[dict[str, str]]:
+    if not downloaded_dir.exists():
+        return []
+    rows: list[dict[str, str]] = []
+    for folder in downloaded_dir.iterdir():
+        if not folder.is_dir():
+            continue
+        source_slug, day_text = _parse_downloaded_folder_name(folder.name)
+        rows.append(
+            {
+                "source_slug": source_slug,
+                "date": day_text,
+                "folder_name": folder.name,
+                "folder_path": str(folder),
+            }
+        )
+    rows.sort(key=lambda row: (row["source_slug"].lower(), row["date"], row["folder_name"].lower()))
+    return rows
+
+
+def _parse_downloaded_folder_name(folder_name: str) -> tuple[str, str]:
+    match = re.match(r"^(?P<source>.+)-(?P<date>\d{4}-\d{2}-\d{2})$", folder_name)
+    if not match:
+        return folder_name, ""
+    return match.group("source"), match.group("date")
 
 
 def _open_folder(path: Path) -> None:

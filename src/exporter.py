@@ -1,22 +1,26 @@
 from __future__ import annotations
 
+import json
 import logging
-import shutil
 from collections import Counter
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
 from .file_writer import clean_folder, write_messages_file
-from .manifest import write_manifest
-from .models import ExportOptions, ExportResult, Message, Source, Status
+from .manifest import manifest_filename, result_to_row, write_manifest
+from .models import ExportArtifacts, ExportOptions, ExportResult, Message, Source, Status
 from .telegram_login_client import TelegramLoginClient
 from .telegram_public_web import PublicWebFetcher
 from .utils import (
+    HELSINKI_TZ,
     OUTPUTS_DIR,
-    create_export_dir,
     inclusive_date_range,
     is_complete_day,
+    messages_filename,
+    output_layout,
     pair_folder_name,
+    path_for_display,
     parse_bool,
     read_messages_header,
     source_slug,
@@ -34,34 +38,35 @@ def run_export(
     telegram_client: TelegramLoginClient | None = None,
     progress_callback: ProgressCallback | None = None,
     log_callback: LogCallback | None = None,
-) -> tuple[Path, list[ExportResult]]:
+) -> tuple[ExportArtifacts, list[ExportResult]]:
     outputs_root = outputs_root or OUTPUTS_DIR
+    downloaded_dir, manifests_dir, runs_dir = output_layout(outputs_root)
+    run_id = _create_run_id(manifests_dir, runs_dir)
     days = inclusive_date_range(options.start_date, options.end_date)
     sources = [source.strip() for source in options.sources if source.strip()]
     if not sources:
         raise ValueError("At least one source is required")
 
-    export_dir = create_export_dir(outputs_root)
     public_fetcher = public_fetcher or PublicWebFetcher()
     telegram_client = telegram_client or TelegramLoginClient()
     results: list[ExportResult] = []
     total = len(sources) * len(days)
     done = 0
-    _log(log_callback, f"Export started: mode={options.mode}, sources={len(sources)}, days={len(days)}")
+    _log(log_callback, f"Export started: run_id={run_id}, mode={options.mode}, sources={len(sources)}, days={len(days)}")
 
     for raw_source in sources:
         slug = source_slug(raw_source)
         for day in days:
             done += 1
             pair_name = pair_folder_name(day, slug)
-            pair_folder = export_dir / pair_name
+            pair_folder = downloaded_dir / pair_name
             complete_day = is_complete_day(day)
             label = f"{raw_source} / {day:%Y-%m-%d}"
             if progress_callback:
                 progress_callback(done, total, label)
             _log(log_callback, f"Processing {label}")
 
-            skipped = _maybe_copy_existing_complete(outputs_root, export_dir, pair_name, pair_folder, complete_day, options.existing_mode)
+            skipped = _maybe_reuse_existing_complete(pair_folder, slug, day, options.existing_mode)
             if skipped is not None:
                 results.append(skipped)
                 _log(log_callback, f"Skipped existing complete: {label}")
@@ -107,9 +112,16 @@ def run_export(
                 _log(log_callback, f"ERROR {label}: {error}")
             results.append(result)
 
-    write_manifest(export_dir, results)
-    _log(log_callback, f"Export finished: {export_dir}")
-    return export_dir, results
+    manifest_path = write_manifest(manifests_dir, run_id, results)
+    run_path = _write_run_record(runs_dir, run_id, options, sources, days, downloaded_dir, manifest_path, results)
+    artifacts = ExportArtifacts(
+        run_id=run_id,
+        manifest_path=manifest_path,
+        run_path=run_path,
+        downloaded_dir=downloaded_dir,
+    )
+    _log(log_callback, f"Export finished: manifest={manifest_path}")
+    return artifacts, results
 
 
 def summarize_results(results: list[ExportResult]) -> Counter:
@@ -138,71 +150,115 @@ def _fetch_pair(
     )
 
 
-def _maybe_copy_existing_complete(
-    outputs_root: Path,
-    current_export_dir: Path,
-    pair_name: str,
+def _maybe_reuse_existing_complete(
     pair_folder: Path,
-    complete_day: bool,
+    slug: str,
+    day: date,
     existing_mode: str,
 ) -> ExportResult | None:
-    if existing_mode != "skip_complete" or not complete_day:
+    if existing_mode != "skip_complete":
         return None
 
-    existing = find_existing_complete_pair(outputs_root, current_export_dir, pair_name)
-    if existing is None:
+    header = _messages_header_from_pair(pair_folder, slug, day)
+    if not header:
         return None
 
-    if pair_folder.exists():
-        shutil.rmtree(pair_folder)
-    shutil.copytree(existing, pair_folder)
-    header = _messages_header_from_pair(pair_folder)
-    day_text = header.get("DATE", pair_name.split("__", 1)[0])
-    from datetime import date
+    parsed = _parse_existing_complete_header(header, pair_folder, day)
+    if parsed is None:
+        return None
+    return parsed
+
+
+def _parse_existing_complete_header(header: dict[str, str], pair_folder: Path, expected_day: date) -> ExportResult | None:
+    if not parse_bool(header.get("COMPLETE_DAY", "")):
+        return None
+    if header.get("STATUS") not in {"OK", "NO_MESSAGES"}:
+        return None
+    if header.get("DATE") != f"{expected_day:%Y-%m-%d}":
+        return None
+    if not header.get("SOURCE") or not header.get("SOURCE_TITLE"):
+        return None
+    if header.get("MODE") not in {"public_web", "telegram_login"}:
+        return None
+
+    source_type = header.get("SOURCE_TYPE", "unknown")
+    if source_type not in {"channel", "private_channel", "group", "supergroup", "private_chat", "unknown"}:
+        return None
+    try:
+        messages_count = int(header["MESSAGES_COUNT"])
+        media_count = int(header["MEDIA_COUNT"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
     return ExportResult(
-        source=header.get("SOURCE", ""),
-        source_title=header.get("SOURCE_TITLE", ""),
-        source_type=header.get("SOURCE_TYPE", "unknown"),
-        mode=header.get("MODE", "public_web"),
-        day=date.fromisoformat(day_text),
+        source=header["SOURCE"],
+        source_title=header["SOURCE_TITLE"],
+        source_type=source_type,  # type: ignore[arg-type]
+        mode=header["MODE"],  # type: ignore[arg-type]
+        day=expected_day,
         folder_path=pair_folder,
-        messages_count=int(header.get("MESSAGES_COUNT") or 0),
-        media_count=int(header.get("MEDIA_COUNT") or 0),
+        messages_count=messages_count,
+        media_count=media_count,
         status="SKIPPED_EXISTING_COMPLETE",
         complete_day=True,
     )
 
 
-def find_existing_complete_pair(outputs_root: Path, current_export_dir: Path, pair_name: str) -> Path | None:
-    if not outputs_root.exists():
-        return None
-    export_dirs = [path for path in outputs_root.glob("export_*") if path.is_dir() and path != current_export_dir]
-    export_dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    for export_dir in export_dirs:
-        pair_folder = export_dir / pair_name
-        if not pair_folder.is_dir():
-            continue
-        header = _messages_header_from_pair(pair_folder)
-        if not header:
-            continue
-        if (
-            parse_bool(header.get("COMPLETE_DAY", "false"))
-            and header.get("STATUS") in {"OK", "NO_MESSAGES"}
-        ):
-            return pair_folder
-    return None
-
-
-def _messages_header_from_pair(pair_folder: Path) -> dict[str, str]:
-    messages_files = list(pair_folder.glob("*__messages.txt"))
-    if not messages_files:
+def _messages_header_from_pair(pair_folder: Path, slug: str, day: date) -> dict[str, str]:
+    messages_file = pair_folder / messages_filename(day, slug)
+    if not messages_file.exists():
         return {}
-    return read_messages_header(messages_files[0])
+    try:
+        return read_messages_header(messages_file)
+    except OSError:
+        return {}
+
+
+def _create_run_id(manifests_dir: Path, runs_dir: Path, now: datetime | None = None) -> str:
+    now = now or datetime.now(HELSINKI_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=HELSINKI_TZ)
+    else:
+        now = now.astimezone(HELSINKI_TZ)
+    base = f"{now:%Y-%m-%d_%H%M}"
+    candidate = base
+    index = 2
+    while (manifests_dir / manifest_filename(candidate)).exists() or (runs_dir / f"run_{candidate}.json").exists():
+        candidate = f"{base}_{index}"
+        index += 1
+    return candidate
+
+
+def _write_run_record(
+    runs_dir: Path,
+    run_id: str,
+    options: ExportOptions,
+    sources: list[str],
+    days: list[date],
+    downloaded_dir: Path,
+    manifest_path: Path,
+    results: list[ExportResult],
+) -> Path:
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    path = runs_dir / f"run_{run_id}.json"
+    data = {
+        "run_id": run_id,
+        "created_at": datetime.now(HELSINKI_TZ).isoformat(),
+        "mode": options.mode,
+        "sources": sources,
+        "start_date": f"{days[0]:%Y-%m-%d}" if days else "",
+        "end_date": f"{days[-1]:%Y-%m-%d}" if days else "",
+        "existing_mode": options.existing_mode,
+        "download_images": options.download_images,
+        "downloaded_dir": path_for_display(downloaded_dir),
+        "manifest_path": path_for_display(manifest_path),
+        "results": [result_to_row(result) for result in results],
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
 
 
 def _log(log_callback: LogCallback | None, message: str) -> None:
     logging.info(message)
     if log_callback:
         log_callback(message)
-

@@ -38,12 +38,16 @@ def result_to_row(result: ExportResult) -> dict[str, str | int]:
     }
 
 
-def write_manifest(export_dir: Path, results: list[ExportResult]) -> Path:
-    path = export_dir / "manifest.csv"
+def manifest_filename(run_id: str) -> str:
+    return f"manifest_{run_id}.csv"
+
+
+def write_manifest(manifests_dir: Path, run_id: str, results: list[ExportResult]) -> Path:
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    path = manifests_dir / manifest_filename(run_id)
     with path.open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=MANIFEST_FIELDS)
         writer.writeheader()
         for result in results:
             writer.writerow(result_to_row(result))
     return path
-

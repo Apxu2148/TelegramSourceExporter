@@ -1,11 +1,13 @@
 {
-  "last_sources": "@stanizlavsky\n@radarrussiia",
+  "last_sources": "@DeCenter\n@KIT_finance_broker",
   "last_dates": {
-    "start": "2026-06-01",
-    "end": "2026-06-03"
+    "start": "2026-05-25",
+    "end": "2026-05-31"
   },
   "last_mode": "public_web",
-  "last_output_dir": "C:\\Python\\TelegramSourceExporter\\outputs\\export_2026-06-03_1242",
+  "last_output_dir": "C:\\Python\\TelegramSourceExporter\\outputs\\downloaded",
+  "last_manifest_path": "C:\\Python\\TelegramSourceExporter\\outputs\\manifests\\manifest_2026-06-04_1356.csv",
+  "last_run_path": "C:\\Python\\TelegramSourceExporter\\outputs\\runs\\run_2026-06-04_1356.json",
   "download_images": true,
   "existing_mode": "skip_complete"
 }

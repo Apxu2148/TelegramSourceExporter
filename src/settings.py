@@ -13,6 +13,8 @@ SAFE_SETTINGS_KEYS = {
     "last_dates",
     "last_mode",
     "last_output_dir",
+    "last_manifest_path",
+    "last_run_path",
     "download_images",
     "existing_mode",
 }
@@ -21,6 +23,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "last_dates": {},
     "last_mode": "public_web",
     "last_output_dir": "",
+    "last_manifest_path": "",
+    "last_run_path": "",
     "download_images": True,
     "existing_mode": "skip_complete",
 }
@@ -51,4 +55,3 @@ def save_settings(settings: dict[str, Any], path: Path = SETTINGS_PATH) -> None:
     safe = sanitize_settings(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8")
-

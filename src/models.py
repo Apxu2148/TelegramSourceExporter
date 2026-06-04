@@ -51,6 +51,14 @@ class ExportResult:
 
 
 @dataclass
+class ExportArtifacts:
+    run_id: str
+    manifest_path: Path
+    run_path: Path
+    downloaded_dir: Path
+
+
+@dataclass
 class ExportOptions:
     mode: Mode
     sources: list[str]
@@ -67,4 +75,3 @@ class DialogSource:
     raw: str
     title: str
     source_type: SourceType
-

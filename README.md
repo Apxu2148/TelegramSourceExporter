@@ -16,7 +16,9 @@ Use `run.bat` from this folder:
 run.bat
 ```
 
-The script creates `.venv` inside `C:\Python\TelegramSourceExporter`, installs dependencies from `requirements.txt` into that local environment, starts Streamlit, and opens `http://127.0.0.1:8501`.
+The script creates `.venv` inside `C:\Python\TelegramSourceExporter`, installs dependencies from `requirements.txt`, starts Streamlit, and opens `http://127.0.0.1:8501`.
+
+If Streamlit is already running on `http://127.0.0.1:8501`, `run.bat` opens the existing local address instead of starting a second server. Streamlit usage stats are disabled through `.streamlit/config.toml` and `STREAMLIT_BROWSER_GATHER_USAGE_STATS=false`.
 
 ## Modes
 
@@ -54,20 +56,37 @@ Create Telegram API credentials in your own browser at Telegram's developer port
 
 ## Outputs
 
-Each run creates:
+Downloaded history is a flat visual list:
 
 ```text
 outputs/
-  export_YYYY-MM-DD_HHMM/
-    manifest.csv
-    YYYY-MM-DD__source_slug/
-      YYYY-MM-DD__source_slug__messages.txt
-      YYYY-MM-DD__source_slug__msg_12345__091500__photo_01.jpg
+  downloaded/
+    markettwits-2026-06-01/
+      markettwits-2026-06-01__messages.txt
+      markettwits-2026-06-01__msg_12345__091500__photo_01.jpg
+    markettwits-2026-06-02/
+    stanizlavsky-2026-06-01/
+    radarrussia-2026-06-02/
+  manifests/
+    manifest_YYYY-MM-DD_HHMM.csv
+  runs/
+    run_YYYY-MM-DD_HHMM.json
 ```
 
-`messages.txt` and `manifest.csv` are written as `utf-8-sig`.
+`outputs/downloaded` is intentionally not grouped by year, month, run, or source. A user can open it and immediately see which source/date pairs have already been downloaded.
+
+`messages.txt` and `manifest_*.csv` are written as `utf-8-sig`.
 
 The application does not create ZIP archives and does not create `media_index.txt`.
+
+## Results UI
+
+The results block has two views:
+
+- `Последний запуск` reads only the last manifest from `outputs/manifests`.
+- `Вся история` lists folders from `outputs/downloaded` with pagination by 100 folders.
+
+History sorting is stable: by `source_slug`, then by date.
 
 ## COMPLETE_DAY
 
@@ -79,9 +98,19 @@ Timezone is always `Europe/Helsinki`.
 
 ## Repeat Exports
 
-When `Пропускать COMPLETE_DAY=true` is selected, an already exported pair is skipped only if a previous `messages.txt` exists, `COMPLETE_DAY=true`, and status is `OK` or `NO_MESSAGES`. The previous folder is copied into the new export folder and the manifest row gets `SKIPPED_EXISTING_COMPLETE`.
+When `Пропускать COMPLETE_DAY=true` is selected, an existing pair folder is skipped only if the exact messages file exists, can be read, has `COMPLETE_DAY=true`, and has `STATUS: OK` or `STATUS: NO_MESSAGES`.
 
-When `Принудительно перескачать всё` is selected, every pair folder is cleaned and created again.
+All other folders are treated as doubtful and are fully cleaned and downloaded again, including:
+
+- `COMPLETE_DAY=false` with `OK`, `NO_MESSAGES`, or `ERROR`;
+- `COMPLETE_DAY=true` with `ERROR`;
+- missing TXT;
+- unreadable or incomplete metadata;
+- unknown status.
+
+When `Принудительно перескачать всё` is selected, every requested pair folder is cleaned and created again.
+
+Old `outputs/export_*` folders are ignored. They are not migrated and are not used for skip.
 
 ## Media
 
@@ -97,4 +126,3 @@ Videos, documents, stickers, voice messages, unsupported media, OCR, and image-c
 - Only images are downloaded.
 - LLM analysis, scoring, backtesting, OCR, EXE builds, ZIP archives, and schedulers are not included.
 - Real Telegram credentials must never be added to code, tests, or README.
-
