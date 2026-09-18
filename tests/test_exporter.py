@@ -47,6 +47,32 @@ class FakePublicFetcher:
         return Source(raw=f"@{raw_source}", title=raw_source.title(), source_type="channel"), messages
 
 
+def test_exporter_passes_proxy_to_public_web_fetcher(monkeypatch, tmp_path):
+    import src.exporter as exporter
+
+    captured: dict[str, object] = {}
+
+    def factory(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return FakePublicFetcher()
+
+    monkeypatch.setattr(exporter, "PublicWebFetcher", factory)
+    proxy = {"http": "socks5h://127.0.0.1:11808", "https": "socks5h://127.0.0.1:11808"}
+
+    run_export(
+        ExportOptions(
+            mode="public_web",
+            sources=["banksta"],
+            start_date=date(2026, 5, 1),
+            end_date=date(2026, 5, 1),
+            proxy=proxy,
+        ),
+        outputs_root=tmp_path,
+    )
+
+    assert captured["kwargs"] == {"proxy": proxy}
+
+
 def test_fetch_pair_forwards_proxy_only_when_set(tmp_path):
     telegram_client = FakeTelegramClient()
 

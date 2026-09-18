@@ -47,7 +47,7 @@ def run_export(
     if not sources:
         raise ValueError("At least one source is required")
 
-    public_fetcher = public_fetcher or PublicWebFetcher()
+    public_fetcher = public_fetcher or PublicWebFetcher(proxy=options.proxy)
     telegram_client = telegram_client or TelegramLoginClient()
     results: list[ExportResult] = []
     total = len(sources) * len(days)

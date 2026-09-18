@@ -1,5 +1,7 @@
 from datetime import date
 
+import requests
+
 from src.telegram_public_web import PublicWebFetcher
 
 
@@ -34,6 +36,37 @@ class FakeSession:
             </div>
             """
         )
+
+
+def test_public_web_without_proxy_keeps_session_defaults():
+    fetcher = PublicWebFetcher()
+
+    assert fetcher.session.proxies == {}
+    assert fetcher.session.trust_env is True
+
+
+def test_public_web_applies_socks5_proxy_to_requests(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_send(self, request, **kwargs):
+        captured["proxies"] = kwargs.get("proxies")
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b"<html></html>"
+        response.request = request
+        response.url = request.url
+        return response
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", fake_send)
+    proxy = {"http": "socks5h://127.0.0.1:11808", "https": "socks5h://127.0.0.1:11808"}
+
+    fetcher = PublicWebFetcher(proxy=proxy)
+    assert fetcher.session.proxies["https"] == "socks5h://127.0.0.1:11808"
+    assert fetcher.session.trust_env is False
+
+    fetcher.session.get("https://t.me/s/banksta", timeout=30)
+
+    assert captured["proxies"] == proxy
 
 
 def test_public_web_parses_messages_and_downloads_image(tmp_path):

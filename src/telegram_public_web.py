@@ -18,9 +18,17 @@ PHOTO_URL_RE = re.compile(r"background-image:url\(['\"]?(.*?)['\"]?\)")
 
 
 class PublicWebFetcher:
-    def __init__(self, session: requests.Session | None = None, max_pages: int = 100) -> None:
+    def __init__(
+        self,
+        session: requests.Session | None = None,
+        max_pages: int = 100,
+        proxy: dict[str, str] | None = None,
+    ) -> None:
         self.session = session or requests.Session()
         self.max_pages = max_pages
+        if proxy:
+            self.session.proxies.update(proxy)
+            self.session.trust_env = False
         self.session.headers.update(
             {
                 "User-Agent": (

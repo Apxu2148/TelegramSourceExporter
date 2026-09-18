@@ -43,10 +43,9 @@ def main() -> None:
     )
 
     api_id = api_hash = ""
-    proxy: dict[str, object] | None = None
     if mode == "telegram_login":
         api_id, api_hash = _telegram_auth_block()
-        proxy = _proxy_block()
+    proxy = _proxy_block(mode)
 
     manual_sources = st.text_area(
         "Ручной ввод источников (один источник на строку)",
@@ -147,8 +146,8 @@ def _telegram_auth_block() -> tuple[str, str]:
     return api_id, api_hash
 
 
-def _proxy_block() -> dict[str, object] | None:
-    with st.expander("SOCKS5 proxy (только для telegram_login)", expanded=False):
+def _proxy_block(mode: str) -> dict[str, object] | None:
+    with st.expander("SOCKS5 proxy", expanded=False):
         st.caption("Значения proxy не сохраняются в settings.json.")
         use_proxy = st.checkbox("Use SOCKS5 proxy", value=False)
         host = st.text_input("proxy host", value="127.0.0.1", disabled=not use_proxy)
@@ -171,14 +170,23 @@ def _proxy_block() -> dict[str, object] | None:
     if not use_proxy:
         return None
 
+    host = host.strip()
+    port = int(port)
+    user = username.strip()
+
+    if mode == "public_web":
+        auth = f"{user}:{password}@" if user else ""
+        url = f"socks5h://{auth}{host}:{port}"
+        return {"http": url, "https": url}
+
     proxy: dict[str, object] = {
         "proxy_type": "socks5",
-        "addr": host.strip(),
-        "port": int(port),
+        "addr": host,
+        "port": port,
         "rdns": True,
     }
-    if username.strip():
-        proxy["username"] = username.strip()
+    if user:
+        proxy["username"] = user
     if password:
         proxy["password"] = password
     return proxy
