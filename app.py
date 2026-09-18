@@ -43,8 +43,10 @@ def main() -> None:
     )
 
     api_id = api_hash = ""
+    proxy: dict[str, object] | None = None
     if mode == "telegram_login":
         api_id, api_hash = _telegram_auth_block()
+        proxy = _proxy_block()
 
     manual_sources = st.text_area(
         "Ручной ввод источников (один источник на строку)",
@@ -92,7 +94,18 @@ def main() -> None:
             }
         )
         save_settings(settings)
-        _run_export_ui(mode, sources, start_date, end_date, existing_mode, download_images, api_id, api_hash, settings)
+        _run_export_ui(
+            mode,
+            sources,
+            start_date,
+            end_date,
+            existing_mode,
+            download_images,
+            api_id,
+            api_hash,
+            proxy,
+            settings,
+        )
 
     _results_block(settings)
 
@@ -132,6 +145,43 @@ def _telegram_auth_block() -> tuple[str, str]:
 
         st.info("Сессия найдена." if client.session_exists() else "Сессия пока не создана.")
     return api_id, api_hash
+
+
+def _proxy_block() -> dict[str, object] | None:
+    with st.expander("SOCKS5 proxy (только для telegram_login)", expanded=False):
+        st.caption("Значения proxy не сохраняются в settings.json.")
+        use_proxy = st.checkbox("Use SOCKS5 proxy", value=False)
+        host = st.text_input("proxy host", value="127.0.0.1", disabled=not use_proxy)
+        port = st.number_input(
+            "proxy port",
+            min_value=1,
+            max_value=65535,
+            value=11808,
+            step=1,
+            disabled=not use_proxy,
+        )
+        username = st.text_input("proxy username (опционально)", value="", disabled=not use_proxy)
+        password = st.text_input(
+            "proxy password (опционально)",
+            value="",
+            type="password",
+            disabled=not use_proxy,
+        )
+
+    if not use_proxy:
+        return None
+
+    proxy: dict[str, object] = {
+        "proxy_type": "socks5",
+        "addr": host.strip(),
+        "port": int(port),
+        "rdns": True,
+    }
+    if username.strip():
+        proxy["username"] = username.strip()
+    if password:
+        proxy["password"] = password
+    return proxy
 
 
 def _dialog_selector(api_id: str, api_hash: str) -> list[str]:
@@ -185,6 +235,7 @@ def _run_export_ui(
     download_images: bool,
     api_id: str,
     api_hash: str,
+    proxy: dict[str, object] | None,
     settings: dict,
 ) -> None:
     st.session_state.run_log = []
@@ -209,6 +260,7 @@ def _run_export_ui(
         download_images=download_images,
         api_id=api_id,
         api_hash=api_hash,
+        proxy=proxy,
     )
     artifacts, results = run_export(options, progress_callback=progress_callback, log_callback=log_callback)
     settings["last_manifest_path"] = str(artifacts.manifest_path)

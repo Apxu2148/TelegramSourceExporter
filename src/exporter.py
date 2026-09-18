@@ -147,6 +147,7 @@ def _fetch_pair(
         slug,
         api_id=options.api_id,
         api_hash=options.api_hash,
+        proxy=options.proxy,
     )
 
 

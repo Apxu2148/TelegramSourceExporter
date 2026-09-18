@@ -1,10 +1,36 @@
 import json
 from datetime import date, datetime
 
-from src.exporter import run_export
+from src.exporter import _fetch_pair, run_export
 from src.file_writer import write_messages_file
 from src.models import ExportOptions, Message, Source
 from src.utils import HELSINKI_TZ, messages_filename, pair_folder_name
+
+
+class FakeTelegramClient:
+    def __init__(self):
+        self.calls = []
+
+    def fetch_messages_for_day(
+        self,
+        raw_source,
+        day,
+        download_images,
+        output_folder,
+        slug,
+        api_id="",
+        api_hash="",
+        proxy=None,
+    ):
+        self.calls.append(
+            {
+                "raw_source": raw_source,
+                "api_id": api_id,
+                "api_hash": api_hash,
+                "proxy": proxy,
+            }
+        )
+        return Source(raw=raw_source, title=raw_source, source_type="channel"), []
 
 
 class FakePublicFetcher:
@@ -19,6 +45,34 @@ class FakePublicFetcher:
             raise RuntimeError("Channel not available")
         messages = self.messages_by_source.get(raw_source, [])
         return Source(raw=f"@{raw_source}", title=raw_source.title(), source_type="channel"), messages
+
+
+def test_fetch_pair_forwards_proxy_only_when_set(tmp_path):
+    telegram_client = FakeTelegramClient()
+
+    without_proxy = ExportOptions(
+        mode="telegram_login",
+        sources=["@source_a"],
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 1),
+        api_id="123",
+        api_hash="abc",
+    )
+    _fetch_pair(without_proxy, "@source_a", date(2026, 5, 1), tmp_path, "source_a", None, telegram_client)
+    assert telegram_client.calls[-1]["proxy"] is None
+
+    proxy = {"proxy_type": "socks5", "addr": "127.0.0.1", "port": 11808, "rdns": True}
+    with_proxy = ExportOptions(
+        mode="telegram_login",
+        sources=["@source_a"],
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 1),
+        api_id="123",
+        api_hash="abc",
+        proxy=proxy,
+    )
+    _fetch_pair(with_proxy, "@source_a", date(2026, 5, 1), tmp_path, "source_a", None, telegram_client)
+    assert telegram_client.calls[-1]["proxy"] == proxy
 
 
 def test_exporter_writes_downloaded_manifest_run_and_statuses(tmp_path):

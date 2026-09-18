@@ -34,8 +34,14 @@ class TelegramLoginClient:
             count += 1
         return count
 
-    def request_login_code(self, api_id: str, api_hash: str, phone: str) -> str:
-        return _run(self._request_login_code(api_id, api_hash, phone))
+    def request_login_code(
+        self,
+        api_id: str,
+        api_hash: str,
+        phone: str,
+        proxy: dict[str, object] | None = None,
+    ) -> str:
+        return _run(self._request_login_code(api_id, api_hash, phone, proxy))
 
     def complete_login(
         self,
@@ -45,11 +51,17 @@ class TelegramLoginClient:
         code: str,
         phone_code_hash: str,
         password: str = "",
+        proxy: dict[str, object] | None = None,
     ) -> bool:
-        return _run(self._complete_login(api_id, api_hash, phone, code, phone_code_hash, password))
+        return _run(self._complete_login(api_id, api_hash, phone, code, phone_code_hash, password, proxy))
 
-    def list_dialogs(self, api_id: str, api_hash: str) -> list[DialogSource]:
-        return _run(self._list_dialogs(api_id, api_hash))
+    def list_dialogs(
+        self,
+        api_id: str,
+        api_hash: str,
+        proxy: dict[str, object] | None = None,
+    ) -> list[DialogSource]:
+        return _run(self._list_dialogs(api_id, api_hash, proxy))
 
     def fetch_messages_for_day(
         self,
@@ -60,18 +72,29 @@ class TelegramLoginClient:
         slug: str | None = None,
         api_id: str = "",
         api_hash: str = "",
+        proxy: dict[str, object] | None = None,
     ) -> tuple[Source, list[Message]]:
-        return _run(self._fetch_messages_for_day(raw_source, day, download_images, output_folder, slug, api_id, api_hash))
+        return _run(
+            self._fetch_messages_for_day(
+                raw_source, day, download_images, output_folder, slug, api_id, api_hash, proxy
+            )
+        )
 
-    async def _client(self, api_id: str, api_hash: str):
+    async def _client(self, api_id: str, api_hash: str, proxy: dict[str, object] | None = None):
         from telethon import TelegramClient
 
         if not api_id or not api_hash:
             raise ValueError("api_id and api_hash are required for telegram_login mode")
-        return TelegramClient(str(self.session_base), int(api_id), api_hash)
+        return TelegramClient(str(self.session_base), int(api_id), api_hash, proxy=proxy)
 
-    async def _request_login_code(self, api_id: str, api_hash: str, phone: str) -> str:
-        client = await self._client(api_id, api_hash)
+    async def _request_login_code(
+        self,
+        api_id: str,
+        api_hash: str,
+        phone: str,
+        proxy: dict[str, object] | None = None,
+    ) -> str:
+        client = await self._client(api_id, api_hash, proxy)
         await client.connect()
         try:
             sent = await client.send_code_request(phone)
@@ -87,10 +110,11 @@ class TelegramLoginClient:
         code: str,
         phone_code_hash: str,
         password: str,
+        proxy: dict[str, object] | None = None,
     ) -> bool:
         from telethon.errors import SessionPasswordNeededError
 
-        client = await self._client(api_id, api_hash)
+        client = await self._client(api_id, api_hash, proxy)
         await client.connect()
         try:
             try:
@@ -103,8 +127,13 @@ class TelegramLoginClient:
         finally:
             await client.disconnect()
 
-    async def _list_dialogs(self, api_id: str, api_hash: str) -> list[DialogSource]:
-        client = await self._client(api_id, api_hash)
+    async def _list_dialogs(
+        self,
+        api_id: str,
+        api_hash: str,
+        proxy: dict[str, object] | None = None,
+    ) -> list[DialogSource]:
+        client = await self._client(api_id, api_hash, proxy)
         await client.connect()
         try:
             if not await client.is_user_authorized():
@@ -128,8 +157,9 @@ class TelegramLoginClient:
         slug: str | None,
         api_id: str,
         api_hash: str,
+        proxy: dict[str, object] | None = None,
     ) -> tuple[Source, list[Message]]:
-        client = await self._client(api_id, api_hash)
+        client = await self._client(api_id, api_hash, proxy)
         await client.connect()
         try:
             if not await client.is_user_authorized():

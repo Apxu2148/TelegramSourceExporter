@@ -68,6 +68,7 @@ class ExportOptions:
     download_images: bool = True
     api_id: str = ""
     api_hash: str = ""
+    proxy: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
